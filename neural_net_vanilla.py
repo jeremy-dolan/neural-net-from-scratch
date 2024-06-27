@@ -10,30 +10,26 @@ from typing import List, Callable, TypedDict
 # The Node, Layer, and Net classes constitute a complete feed forward neural
 # net framework with forward inference (`Net.forward`), backward propagation
 # (`Net.backward`), and batch gradient descent training (`Net.batch_train`).
-# The object oriented approach makes the structure of the network more
-# transparent, at the cost of obscuring some of the math (in that the weights
-# and biases are maintained within the Node objects, rather than directly
-# passed between the computing functions as in a more procedural approach).
 
 class Node:
-    def __init__(self, L, N, weights:int, activation_fx:Callable, bias:float = 0.):
-        self.layer = L     # layer index, debugging convenience
-        self.node = N      # node index, debugging convenience
-        self.weights = [random.uniform(-0.2, 0.2) for _ in range(weights)]
+    def __init__(self, num_inputs:int, activation_fx:Callable, bias:float = 0.):
+        '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
+        self.weights = [random.uniform(0.1, 0.3)*random.choice((1, -1)) for _ in range(num_inputs)]
         self.bias = bias
         self.activation_fx = activation_fx
 
     def activate(self, inputs:list) -> float:
-        '''Weight each input, add the bias, then apply the node's activation function.'''
+        '''Weight each input, add the bias, then apply the node's activation function'''
         z = sum(weight * input for weight, input in zip(self.weights, inputs))
         z += self.bias
         return self.activation_fx(z)
 
 
 class Layer:
-    def __init__(self, L_index, weights:int, nodes:int, activation_fx:Callable):
-        '''Construct a layer of `nodes` nodes, each with `weights` weights and the given activation function'''
-        self.nodes = [Node(L_index, N_index, weights, activation_fx) for N_index in range(nodes)]
+    def __init__(self, layer_num, num_inputs:int, num_nodes:int, activation_fx:Callable):
+        '''Construct a layer of `num_nodes` Nodes, each with `num_inputs` weights'''
+        self.layer_num = layer_num
+        self.nodes = [Node(num_inputs, activation_fx) for _ in range(num_nodes)]
 
     def activate(self, input:list) -> List[float]:
         '''Activate each node in the layer, returning a list of activation values'''
@@ -42,18 +38,18 @@ class Layer:
 
 class Net:
     def __init__(self, inputs:int, shape:List[int], activation_fxs:List[Callable], loss_fx:Callable):
-        '''Construct a neural network with `inputs` input nodes and `loss_fx` as the loss function for training,
-        where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
+        '''Construct a neural network with `inputs` input nodes and `loss_fx` as the loss function for
+        training, where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
         assert len(shape) == len(activation_fxs)
         shape.insert(0, inputs)
-        self.layers = [Layer(i, shape[i], shape[i+1], activation_fxs[i]) for i in range(len(shape)-1)]
+        self.layers = [Layer(n, shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
         self.loss_fx = loss_fx
 
     def show_params(self):
         '''Print the network's parameters (weights and biases of each node)'''
-        for i,l in enumerate(self.layers):
-            for j,n in enumerate(l.nodes):
-                print(f'layer {i+1}, node {j+1}, {n.weights=} {n.bias=}')
+        for i,layer in enumerate(self.layers, 1):
+            for j,node in enumerate(layer.nodes, 1):
+                print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
 
     def forward(self, x:List[float]) -> List[List[float]]:
         '''Given input `x`, compute activations for each node in the network by iterating through layers'''
@@ -63,12 +59,12 @@ class Net:
         weight: List[List[List[float]]]
         bias: List[List[float]]
     def backward(self, x:list, y:float, activations:List[list]) -> Gradients:
-        '''Compute partial derivatives ("gradients") of the loss w.r.t. every weight and bias, given the input `x`,
-        the correct output `y`, and the `activations` from a forward pass. (The gradients indicate how a change to a
-        weight or bias--while holding the other parameters fixed--would change the loss, and are what we'll use to train)'''
-        # the prediction is just the final layer's output
-        ŷ = activations[-1][0]
-        # we don't need the actual loss, only the derivative of the loss
+        '''Compute partial derivatives ("gradients") of the loss w.r.t. every weight and bias in the Net, given
+        input `x`, correct output `y`, and `activations` from a forward pass. (The gradients indicate how changing
+        a weight or bias--holding the other parameters fixed--changes the loss, and are needed for training.)'''
+        # ŷ, the prediction, is just the final layer's output
+        ŷ = activations[-1][0]                                      # FIXME: extend for multiple output nodes
+        # we can directly calculate dL/dŷ, the derivative of the loss with regard to the prediction:
         dLdŷ = loss_derivative[self.loss_fx](y, ŷ)
 
         # create weight and bias gradient lists so we can index on them
@@ -80,9 +76,11 @@ class Net:
         node_grads[-1] = [dLdŷ]
 
         # iterate backwards through the layers
-        for i in range(len(self.layers)-1, -1, -1):
+        for layer in reversed(self.layers):
+            layer_num = layer.layer_num
+
             # for each node, its activation from the forward pass, and its gradient from the backward pass...
-            for n, a, dLda in zip(self.layers[i].nodes, activations[i], node_grads[i]):
+            for n, a, dLda in zip(layer.nodes, activations[layer_num], node_grads[layer_num]):
                 # compute da/dz (partial derivative of the node's activation w.r.t. the pre-activation value)
                 dadz = derivative_from_a[n.activation_fx](a)
                 # compute dL/dz using the chain rule
@@ -92,73 +90,86 @@ class Net:
 
                 ### bias gradient ###
                 # Since b is directly added into z, dz/db = 1, so by the chain rule, dL/db = 1 * dL/dz = dL/dz:
-                bias_grads[i].append(dLdz)
+                dLdb = dLdz
+                bias_grads[layer_num].append(dLdb)
 
                 ### weight gradients ###
                 # Since the weights scale an incoming signal (either an activation from the prior layer or an input),
-                # the derivative of z w.r.t. the weight is just the value of that signal: dz/dw[j] = (a[i-1][j] or x[j])
-                # Then, by the chain rule: dL/dw[j] = dz/dw[j] * dL/dz
-                in_values = activations[i-1] if i != 0 else x
-                weight_grads[i].append([dzdw * dLdz for dzdw in in_values])
+                # dz/dw (z's rate of change when the weight changes) is just that signal value:
+                #   dz/dw[i] = x[i]      for the first layer, and
+                #            = a[L-1][i] for layer L > 1
+                # Then, by the chain rule: dL/dw[i] = dz/dw[i] * dL/dz
+                in_signal = activations[layer_num-1] if layer_num != 0 else x
+                dLdw = [dzdw * dLdz for dzdw in in_signal]
+                weight_grads[layer_num].append(dLdw)
 
                 ### prior layer activation gradients ###
-                # Likewise, the derivative of z w.r.t. the prior activation is just the weight: dz/da[i-1][j] = w[j]
-                # However, because each node's activation can affect the loss via multiple downstream nodes, we must
-                # accumulate all of these local effects to get the derivative of the loss: dL/da[i] += dz/da * dL/dz
-                if i == 0:
-                    # don't calculate gradients for the input (x); skip to the next node
+                if layer_num == 0: # we don't need gradients for the input; skip to the next node
                     continue
-                for j in range(len(n.weights)):
-                    dzda = n.weights[j]
+                # Likewise, the derivative of z w.r.t. the prior activation is just the weight: dz/da[L-1][i] = w[i]
+                # However, because each node's activation can affect the loss via multiple downstream paths, we must
+                # accumulate each individual effect to get the total derivative of the loss: dL/da[i] += dz/da * dL/dz
+                for i, weight in enumerate(n.weights):
+                    dzda = weight
+                    # the effect of this node's activation on the loss *through just this specific weight*:
                     dLda_increment = dzda * dLdz
-                    node_grads[i-1][j] += dLda_increment
-                    # print(f'added {dLda_increment} to node grad[{i-1}][{j}]')
+                    # add the local effect to the overall effect:
+                    node_grads[layer_num-1][i] += dLda_increment
 
         return {'weight': weight_grads, 'bias': bias_grads}
 
     # Last but not least, our training function. When the training data is small, we can do full batch training
-    def batch_train(self, training_data:List[dict], epochs:int, learning_rate:float=0.1) -> None:
+    def batch_train(self, training_data:List[dict], epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
         '''Train network using batch gradient descent with `training_data` for `epochs` batches'''
-        def checkpoint(epoch):
-            return True if epoch == 0 or (epoch+1) % 1_000 == 0 else False
+        def is_checkpoint(epoch):
+            return True if epoch == 1 or epoch % checkpoint == 0 else False
 
-        batch_loss = []
-        for epoch in range(epochs):
-            batch = []
-            # (1) collect gradients for each case in the training data using a forward and backward pass for each
-            for training_case in random.sample(training_data, len(training_data)):
+        batch_losses = []
+        for epoch in range(1, epochs+1):
+            batch_grads = []
+            batch_size = len(training_data)
+            # (1) collect gradients for each training data case by running a forward and backward pass for each
+            for training_case in random.sample(training_data, batch_size):
                 x, y = training_case.values()
                 activations = self.forward(x)
                 gradients = self.backward(x, y, activations)
 
-                batch.append(gradients)
-                if checkpoint(epoch):
+                batch_grads.append(gradients)
+                if is_checkpoint(epoch):
                     ŷ = activations[-1][0]
-                    batch_loss.append(self.loss_fx(y, ŷ))
+                    batch_losses.append(self.loss_fx(y, ŷ))
 
-            if checkpoint(epoch):
-                print(f'epoch {epoch+1:{len(str(epochs))}d} loss={sum(batch_loss)/len(batch)}')
-                batch_loss = []
+            if is_checkpoint(epoch):
+                print(f'epoch {epoch:{len(str(epochs))}d}, loss {sum(batch_losses)/batch_size}')
+                batch_losses = []
 
-            # (2) compute the average gradient for each weight and bias across all training cases in the batch
-            average_bias_grad = [[] for _ in range(len(self.layers))]
-            average_weight_grads = [[] for _ in range(len(self.layers))]
-            for layer in range(len(self.layers)):
-                transposed_bias_grads = list(zip(*[batch[b]['bias'][layer] for b in range(len(batch))]))
-                average_bias_grad[layer] = [sum(grads)/len(batch) for grads in transposed_bias_grads]
+            # (2) compute the average gradient for each weight and bias across all runs in the batch
+            average_bias_grads = []
+            average_weight_grads = []
+            for layer_i, layer in enumerate(self.layers):
+                # gather the layer's bias gradients from each run (shape=num_runs, num_nodes)
+                layer_bias_grads = [batch_grads[run_i]['bias'][layer_i] for run_i in range(batch_size)]
+                # transpose the matrix so the gradients are grouped by node (shape=num_nodes, num_runs)
+                transposed_bias_grads = list(zip(*layer_bias_grads))
+                # average each node's gradients and store the result
+                average_bias_grads.append([sum(grads)/batch_size for grads in transposed_bias_grads])
 
-                average_weight_grads[layer] = [[] for _ in range(len(self.layers[layer].nodes))]
-                for node in range(len(self.layers[layer].nodes)):
-                    transposed_weight_grads = list(zip(*[batch[b]['weight'][layer][node] for b in range(len(batch))]))
-                    average_weight_grads[layer][node] = [sum(grads)/len(batch) for grads in transposed_weight_grads]
+                layer_weight_grads = []
+                for node_i, node in enumerate(layer.nodes):
+                    # gather the node's weight gradients from each run (shape=num_runs, num_weights)
+                    node_weight_grads = [batch_grads[run_i]['weight'][layer_i][node_i] for run_i in range(batch_size)]
+                    # transpose the matrix so the gradients are grouped by weight (shape=num_weights, num_runs)
+                    transposed_weight_grads = list(zip(*node_weight_grads))
+                    # average each weight's gradients and store the result
+                    layer_weight_grads.append([sum(grads)/batch_size for grads in transposed_weight_grads])
+                average_weight_grads.append(layer_weight_grads)
 
-            # (3) nudge the weights in the direction opposite the gradient (which points towards the steepest ascent of loss)
-            for layer, layer_b_grads, layer_w_grads in zip(self.layers, average_bias_grad, average_weight_grads):
+            # (3) nudge each weight and bias against its gradient (which points towards the steepest ascent of loss)
+            for layer, layer_b_grads, layer_w_grads in zip(self.layers, average_bias_grads, average_weight_grads):
                 for node, b_grad, w_grads in zip(layer.nodes, layer_b_grads, layer_w_grads):
                     node.bias += -b_grad * learning_rate
-                    for i in range(len(node.weights)):
-                        node.weights[i] += -w_grads[i] * learning_rate
-
+                    for i, w_grad in enumerate(w_grads):
+                        node.weights[i] += -w_grad * learning_rate
 
 
 #########################################################
@@ -203,3 +214,7 @@ derivative_from_a = {
 loss_derivative = {
     log_loss: log_loss_derivative,
 }
+
+# Hat tips for their explanations of backpropagation:
+# * Rumelhart, Hinton, and Williams, "Learning representations by back-propagating errors" _Nature_ (1986)
+# * Michael A. Nielsen, "Neural networks and deep learning" http://neuralnetworksanddeeplearning.com/ (2015)
