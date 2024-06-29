@@ -203,8 +203,8 @@ def plot_net_meshgrids(node1grid, node2grid, outputgrid):
 
     def middle_of_right_spline(ax:plt.Axes):
         bbox = ax.get_position()
-        return [bbox.x1,       (bbox.y0 + bbox.y1)/2]
-        return [bbox.x1-0.001, (bbox.y0 + bbox.y1)/2] # nudge x value due to line curvature
+        bbox.x1 -= 0.002 # empirical nudge to x value
+        return [bbox.x1, (bbox.y0 + bbox.y1)/2]
     def middle_of_left_spline(ax:plt.Axes):
         bbox = ax.get_position()
         return [bbox.x0, (bbox.y0 + bbox.y1)/2]
