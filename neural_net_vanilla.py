@@ -5,7 +5,15 @@
 
 import math
 import random
-from typing import List, Callable, TypedDict
+from typing import Callable, TypedDict
+
+# Aliases for type hints
+Vector = list[float]
+Activations = list[Vector]
+class Gradients(TypedDict):
+    weight: list[list[Vector]]
+    bias: list[Vector]
+
 
 # The Node, Layer, and Net classes constitute a complete feed forward neural
 # net framework with forward inference (`Net.forward`), backward propagation
@@ -18,7 +26,7 @@ class Node:
         self.bias = bias
         self.activation_fx = activation_fx
 
-    def activate(self, inputs:list) -> float:
+    def activate(self, inputs:Vector) -> float:
         '''Weight each input, add the bias, then apply the node's activation function'''
         z = sum(weight * input for weight, input in zip(self.weights, inputs))
         z += self.bias
@@ -31,13 +39,13 @@ class Layer:
         self.layer_num = layer_num
         self.nodes = [Node(num_inputs, activation_fx) for _ in range(num_nodes)]
 
-    def activate(self, input:list) -> List[float]:
+    def activate(self, input:Vector) -> Vector:
         '''Activate each node in the layer, returning a list of activation values'''
         return [node.activate(input) for node in self.nodes]
 
 
 class Net:
-    def __init__(self, inputs:int, shape:List[int], activation_fxs:List[Callable], loss_fx:Callable):
+    def __init__(self, inputs:int, shape:list[int], activation_fxs:list[Callable], loss_fx:Callable):
         '''Construct a neural network with `inputs` input nodes and `loss_fx` as the loss function for
         training, where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
         assert len(shape) == len(activation_fxs)
@@ -51,20 +59,17 @@ class Net:
             for j,node in enumerate(layer.nodes, 1):
                 print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
 
-    def forward(self, x:List[float]) -> List[List[float]]:
+    def forward(self, x:Vector) -> Activations:
         '''Given input `x`, compute activations for each node in the network by iterating through layers'''
         return [x := layer.activate(x) for layer in self.layers]
 
-    class Gradients(TypedDict):
-        weight: List[List[List[float]]]
-        bias: List[List[float]]
-    def backward(self, x:list, y:float, activations:List[list]) -> Gradients:
+    def backward(self, x:Vector, y:Vector, activations:Activations) -> Gradients:
         '''Compute partial derivatives ("gradients") of the loss w.r.t. every weight and bias in the Net, given
         input `x`, correct output `y`, and `activations` from a forward pass. (The gradients indicate how changing
         a weight or bias--holding the other parameters fixed--changes the loss, and are needed for training.)'''
         # ŷ, the prediction, is just the final layer's output
-        ŷ = activations[-1][0]                                      # FIXME: extend for multiple output nodes
-        # we can directly calculate dL/dŷ, the derivative of the loss with regard to the prediction:
+        ŷ = activations[-1]
+        # we start by calculating dL/dŷ, the derivative of the loss with regard to the prediction:
         dLdŷ = loss_derivative[self.loss_fx](y, ŷ)
 
         # create weight and bias gradient lists so we can index on them
@@ -73,7 +78,7 @@ class Net:
         # initialize node gradient values to zero so we can accumulate on them
         node_grads = [[0] * len(self.layers[i].nodes) for i in range(len(self.layers))]
         # base case: derivative of the loss relative to our prediction
-        node_grads[-1] = [dLdŷ]
+        node_grads[-1] = dLdŷ
 
         # iterate backwards through the layers
         for layer in reversed(self.layers):
@@ -119,7 +124,7 @@ class Net:
         return {'weight': weight_grads, 'bias': bias_grads}
 
     # Last but not least, our training function. When the training data is small, we can do full batch training
-    def batch_train(self, training_data:List[dict], epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
+    def batch_train(self, training_data:list[dict], epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
         '''Train network using batch gradient descent with `training_data` for `epochs` batches'''
         def is_checkpoint(epoch):
             return True if epoch == 1 or epoch % checkpoint == 0 else False
@@ -136,7 +141,7 @@ class Net:
 
                 batch_grads.append(gradients)
                 if is_checkpoint(epoch):
-                    ŷ = activations[-1][0]
+                    ŷ = activations[-1]
                     batch_losses.append(self.loss_fx(y, ŷ))
 
             if is_checkpoint(epoch):
@@ -176,40 +181,59 @@ class Net:
 # Activation functions, loss functions, and derivatives #
 #########################################################
 
-# Activation and loss functions
+# Activation functions
 def ReLU(z:float):
     '''rectified linear unit function, aka squash at zero'''
     return max(0, z)
 
-def sigmoid(z:float):
+def leaky_ReLU(z, alpha=0.01):
+    return z if z >= 0 else z*alpha
+
+def sigmoid(z:float) -> float:
     '''sigmoid function for binary classification'''
     exp_z = math.exp(z)          # benchmark: 10-14% faster to store exp(z) rather than calculate twice
     return exp_z / (1 + exp_z)   # alternate form for numerical stability; 1/(1+math.exp(-z)) will overflow
 
-def log_loss(y:float, y_predicted:float):
-    '''cross-entropy loss for binary classification; penalizes confident but incorrect predictions more heavily'''
-    y_predicted = max(1e-15, min(1-1e-15, y_predicted))                   # clip ŷ to [1e-15, 1-1e15] to avoid log(0)
-    return -( (y*math.log(y_predicted)) + (1-y)*math.log(1-y_predicted) ) # simplifies when y ∈ {0,1}
-
-# Derivatives of our activation and loss functions, for backpropagation:
-def ReLU_derivative(v):
-    return 1 if v > 0 else 0
-
-def sigmoid_derivative(z):
+# Derivatives of our activation functions, for backpropagation:
+def sigmoid_derivative(z:float) -> float:
+    '''calculate the derivative of sigmoid given pre-activation value z'''
     sig = sigmoid(z)
     return sig * (1-sig)
 
-def sigmoid_derivative_from_a(a):
+def sigmoid_derivative_from_a(a:float) -> float:
+    '''during backprop we already have sigmoid(z) = the node's activation a, so calculate the derivative directly'''
     return a * (1-a)
 
-def log_loss_derivative(y_actual:float, y_predicted:float):
-    y_predicted = max(1e-15, min(1-1e-15, y_predicted))           # clip ŷ to [1e-15, 1-1e15] to avoid dividing by 0
-    return -(y_actual/y_predicted)+((1-y_actual)/(1-y_predicted))
+def ReLU_derivative(v:float) -> float:
+    '''the formula for the derivative of ReLU is identical whether calculated from z or from a'''
+    return 1. if v > 0 else 0.
+
+def leaky_ReLU_derivative(v:float, alpha=0.01) -> float:
+    return 1. if v > 0 else alpha
+
+# Loss functions and their derivatives
+def log_loss(y_actual:Vector, y_predicted:Vector) -> float:
+    '''cross-entropy loss for binary classification; penalizes confident but incorrect predictions more heavily'''
+    loss = 0
+    for y, ŷ in zip(y_actual, y_predicted):                         # accumulate the loss for each output node
+        ŷ = max(1e-15, min(1-1e-15, ŷ))                             # clip ŷ to [1e-15, 1-1e-15] to avoid log(0)
+        loss += -((y * math.log(ŷ)) + ((1 - y) * math.log(1 - ŷ)))  # NB: simplifies when y ∈ {0,1}
+    return loss / len(y_actual)                                     # return mean log loss
+
+def log_loss_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
+    '''Compute the derivative of the log loss for binary classification.'''
+    derivatives = []
+    for y, ŷ in zip(y_actual, y_predicted):
+        ŷ = max(1e-15, min(1-1e-15, ŷ))
+        derivative = -(y / ŷ) + ((1 - y) / (1 - ŷ))
+        derivatives.append(derivative)
+    return derivatives
 
 # mappings
 derivative_from_a = {
-    ReLU: ReLU_derivative,
     sigmoid: sigmoid_derivative_from_a,
+    ReLU: ReLU_derivative,
+    leaky_ReLU: leaky_ReLU_derivative,
 }
 loss_derivative = {
     log_loss: log_loss_derivative,
