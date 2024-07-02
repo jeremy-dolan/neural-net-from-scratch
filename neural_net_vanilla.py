@@ -13,7 +13,10 @@ Activations = list[Vector]
 class Gradients(TypedDict):
     weight: list[list[Vector]]
     bias: list[Vector]
-
+class Sample(TypedDict):
+    x: list[float]
+    y: list[float]
+TrainingData = list[Sample]
 
 # The Node, Layer, and Net classes constitute a complete feed forward neural
 # net framework with forward inference (`Net.forward`), backward propagation
@@ -124,18 +127,19 @@ class Net:
         return {'weight': weight_grads, 'bias': bias_grads}
 
     # Last but not least, our training function. When the training data is small, we can do full batch training
-    def batch_train(self, training_data:list[dict], epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
+    def batch_train(self, training_data:TrainingData, epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
         '''Train network using batch gradient descent with `training_data` for `epochs` batches'''
         def is_checkpoint(epoch):
-            return True if epoch == 1 or epoch % checkpoint == 0 else False
+            return True if epoch == 1 or epoch == epochs or epoch % checkpoint == 0 else False
 
         batch_losses = []
         for epoch in range(1, epochs+1):
             batch_grads = []
             batch_size = len(training_data)
-            # (1) collect gradients for each training data case by running a forward and backward pass for each
-            for training_case in random.sample(training_data, batch_size):
-                x, y = training_case.values()
+            # (1) for each training sample, collect gradients of the loss by running a forward and backward pass
+            for sample in training_data:
+                x, y = sample.values()
+
                 activations = self.forward(x)
                 gradients = self.backward(x, y, activations)
 
