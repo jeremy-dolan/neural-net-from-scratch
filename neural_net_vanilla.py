@@ -132,11 +132,12 @@ class Net:
               batch_size:int=32,
               learning_rate:float=0.1,
               batch_progress_every=20,      # report average loss every N batches for monitoring during training
-              epoch_progress_every=1        # report average loss over 
-              ) -> None:
+              epoch_progress_every=1        # report average loss over the entire epoch every N epochs
+              ) -> float:                   # average loss of the final batch
         '''Train network with `training_data` using gradient descent, for `epochs` epochs`. By default, this will
         perform minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size`
-        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1.'''
+        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return the average loss
+        of the final epoch'''
         expected_batches = math.ceil(len(training_data)/batch_size)
 
         for epoch in range(1, epochs+1):
@@ -160,6 +161,8 @@ class Net:
             if report_this_epoch:
                 print(f'epoch {epoch:{len(str(epochs))}d} complete, {batch} batches, ' \
                       f'average loss {epoch_loss/len(training_data):.5f}')
+
+        return epoch_loss/len(training_data)
 
     def gradient_descent(self, batch:TrainingData, learning_rate:float) -> float:
             '''Perform gradient descent on the given `batch`: compute the gradients, average them, and update the
