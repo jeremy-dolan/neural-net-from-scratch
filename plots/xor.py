@@ -116,7 +116,7 @@ def plot_functions(sigmoid, sigmoid_derivative, log_loss):
     ax1.set_ylabel('$a = \sigma(z)$')
 
     x2 = [0.01*(i) for i in range(100)]
-    ll = [log_loss(0, n) for n in x2]
+    ll = [log_loss([0], [n]) for n in x2]
 
     ax2.set_title('log_loss when target_output=0', fontsize=10)
     ax2.plot(x2, ll, label='$log\_loss(0,a) = -log(1-a)$', color='blue')
