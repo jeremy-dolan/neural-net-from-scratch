@@ -20,7 +20,7 @@ TrainingData = list[Sample]
 
 # The Node, Layer, and Net classes constitute a complete feed forward neural
 # net framework with forward inference (`Net.forward`), backward propagation
-# (`Net.backward`), and batch gradient descent training (`Net.batch_train`).
+# (`Net.backward`), and gradient descent training (`Net.train`).
 
 class Node:
     def __init__(self, num_inputs:int, activation_fx:Callable, bias:float = 0.):
@@ -126,31 +126,58 @@ class Net:
 
         return {'weight': weight_grads, 'bias': bias_grads}
 
-    # Last but not least, our training function. When the training data is small, we can do full batch training
-    def batch_train(self, training_data:TrainingData, epochs:int, checkpoint=1_000, learning_rate:float=0.1) -> None:
-        '''Train network using batch gradient descent with `training_data` for `epochs` batches'''
-        def is_checkpoint(epoch):
-            return True if epoch == 1 or epoch == epochs or epoch % checkpoint == 0 else False
+    def train(self,
+              training_data:TrainingData,
+              epochs:int,
+              batch_size:int=32,
+              learning_rate:float=0.1,
+              batch_progress_every=20,      # report average loss every N batches for monitoring during training
+              epoch_progress_every=1        # report average loss over 
+              ) -> None:
+        '''Train network with `training_data` using gradient descent, for `epochs` epochs`. By default, this will
+        perform minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size`
+        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1.'''
+        expected_batches = math.ceil(len(training_data)/batch_size)
 
-        batch_losses = []
         for epoch in range(1, epochs+1):
-            batch_grads = []
-            batch_size = len(training_data)
+            report_this_epoch = (epoch == 1 or epoch == epochs or epoch % epoch_progress_every == 0)
+            epoch_loss = 0
+
+            random.shuffle(training_data)
+
+            # gather minibatches of training data to pass to gradient_descent()
+            for batch, batch_index in enumerate(range(0, len(training_data), batch_size), 1):
+                report_this_batch = (batch % batch_progress_every == 0)
+
+                minibatch = training_data[batch_index:batch_index + batch_size]
+                loss = self.gradient_descent(minibatch, learning_rate)
+
+                if report_this_batch:
+                    print(f'{epoch=} {batch=}/{expected_batches}, average loss {loss/len(minibatch):.5f}')
+                if report_this_epoch:
+                    epoch_loss += loss
+
+            if report_this_epoch:
+                print(f'epoch {epoch:{len(str(epochs))}d} complete, {batch} batches, ' \
+                      f'average loss {epoch_loss/len(training_data):.5f}')
+
+    def gradient_descent(self, batch:TrainingData, learning_rate:float) -> float:
+            '''Perform gradient descent on the given `batch`: compute the gradients, average them, and update the
+            network weights scaled by `learning_rate`. Return the total accumulated loss for the batch.'''
+            batch_size = len(batch) # NB: may be smaller than Net.train()'s batch_size (final minibatch of an epoch)
+
             # (1) for each training sample, collect gradients of the loss by running a forward and backward pass
-            for sample in training_data:
+            batch_grads = []
+            total_loss = 0
+            for sample in batch:
                 x, y = sample.values()
 
                 activations = self.forward(x)
                 gradients = self.backward(x, y, activations)
-
                 batch_grads.append(gradients)
-                if is_checkpoint(epoch):
-                    ŷ = activations[-1]
-                    batch_losses.append(self.loss_fx(y, ŷ))
 
-            if is_checkpoint(epoch):
-                print(f'epoch {epoch:{len(str(epochs))}d}, loss {sum(batch_losses)/batch_size}')
-                batch_losses = []
+                ŷ = activations[-1]
+                total_loss += self.loss_fx(y, ŷ)
 
             # (2) compute the average gradient for each weight and bias across all runs in the batch
             average_bias_grads = []
@@ -179,6 +206,8 @@ class Net:
                     node.bias += -b_grad * learning_rate
                     for i, w_grad in enumerate(w_grads):
                         node.weights[i] += -w_grad * learning_rate
+
+            return total_loss
 
 
 #########################################################
