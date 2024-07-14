@@ -1,5 +1,9 @@
 # Feedforward neural network in vanilla python
 #
+# The Node, Layer, and Net classes constitute a complete multilayer perceptron
+# neural network framework with forward inference (`Net.forward`), backward
+# propagation (`Net.backward`), and gradient descent training (`Net.train`)
+#
 # This framework is written without numpy/pytorch/tensorflow/scikit-learn for
 # educational purposes. It is wildly inefficient.
 
@@ -7,7 +11,6 @@ import math
 import random
 from typing import Callable, TypedDict
 
-# Aliases for type hints
 Vector = list[float]
 Activations = list[Vector]
 class Gradients(TypedDict):
@@ -18,14 +21,10 @@ class Sample(TypedDict):
     y: list[float]
 TrainingData = list[Sample]
 
-# The Node, Layer, and Net classes constitute a complete feed forward neural
-# net framework with forward inference (`Net.forward`), backward propagation
-# (`Net.backward`), and gradient descent training (`Net.train`).
-
 class Node:
     def __init__(self, num_inputs:int, activation_fx:Callable, bias:float = 0.):
         '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
-        self.weights = [random.uniform(0.1, 0.3)*random.choice((1, -1)) for _ in range(num_inputs)]
+        self.weights = [random.uniform(0.2, 0.5)*random.choice((1, -1)) for _ in range(num_inputs)]
         self.bias = bias
         self.activation_fx = activation_fx
 
@@ -133,36 +132,37 @@ class Net:
               learning_rate:float=0.1,
               batch_progress_every=20,      # report average loss every N batches for monitoring during training
               epoch_progress_every=1        # report average loss over the entire epoch every N epochs
-              ) -> float:                   # average loss of the final batch
+              ) -> list[float]:             # average epoch losses
         '''Train network with `training_data` using gradient descent, for `epochs` epochs`. By default, this will
         perform minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size`
-        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return the average loss
-        of the final epoch'''
+        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return a list of the
+        average loss of each epoch'''
         expected_batches = math.ceil(len(training_data)/batch_size)
+        epoch_losses = []
 
         for epoch in range(1, epochs+1):
-            report_this_epoch = (epoch == 1 or epoch == epochs or epoch % epoch_progress_every == 0)
-            epoch_loss = 0
+            print_this_epoch = (epoch == 1 or epoch == epochs or (epoch % epoch_progress_every == 0))
 
+            epoch_loss = 0
             random.shuffle(training_data)
 
-            # gather minibatches of training data to pass to gradient_descent()
-            for batch, batch_index in enumerate(range(0, len(training_data), batch_size), 1):
-                report_this_batch = (batch % batch_progress_every == 0)
+            # gather minibatches of training data and pass them to gradient_descent()
+            for batch_num, batch_index in enumerate(range(0, len(training_data), batch_size), 1):
+                minibatch = training_data[batch_index:(batch_index + batch_size)]
+                batch_loss = self.gradient_descent(minibatch, learning_rate)
 
-                minibatch = training_data[batch_index:batch_index + batch_size]
-                loss = self.gradient_descent(minibatch, learning_rate)
+                epoch_loss += batch_loss
+                if batch_num % batch_progress_every == 0:
+                    print(f'{epoch=} {batch_num=}/{expected_batches}, average loss {batch_loss/len(minibatch):.5f}')
 
-                if report_this_batch:
-                    print(f'{epoch=} {batch=}/{expected_batches}, average loss {loss/len(minibatch):.5f}')
-                if report_this_epoch:
-                    epoch_loss += loss
+            epoch_average_loss = epoch_loss/len(training_data)
+            epoch_losses.append(epoch_average_loss)
+            if print_this_epoch:
+                print(f'epoch {epoch:{len(str(epochs))}d} complete, ' \
+                      f'{batch_num} batch{"es" if batch_num != 1 else ""}, ' \
+                      f'average loss {epoch_average_loss:.5f}')
 
-            if report_this_epoch:
-                print(f'epoch {epoch:{len(str(epochs))}d} complete, {batch} batches, ' \
-                      f'average loss {epoch_loss/len(training_data):.5f}')
-
-        return epoch_loss/len(training_data)
+        return epoch_losses
 
     def gradient_descent(self, batch:TrainingData, learning_rate:float) -> float:
             '''Perform gradient descent on the given `batch`: compute the gradients, average them, and update the
@@ -171,7 +171,7 @@ class Net:
 
             # (1) for each training sample, collect gradients of the loss by running a forward and backward pass
             batch_grads = []
-            total_loss = 0
+            batch_loss = 0
             for sample in batch:
                 x, y = sample.values()
 
@@ -180,7 +180,7 @@ class Net:
                 batch_grads.append(gradients)
 
                 ŷ = activations[-1]
-                total_loss += self.loss_fx(y, ŷ)
+                batch_loss += self.loss_fx(y, ŷ)
 
             # (2) compute the average gradient for each weight and bias across all runs in the batch
             average_bias_grads = []
@@ -210,7 +210,7 @@ class Net:
                     for i, w_grad in enumerate(w_grads):
                         node.weights[i] += -w_grad * learning_rate
 
-            return total_loss
+            return batch_loss
 
 
 #########################################################
