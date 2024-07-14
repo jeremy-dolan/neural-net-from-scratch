@@ -130,6 +130,20 @@ def plot_functions(sigmoid, sigmoid_derivative, log_loss):
     plt.show()
 
 
+def plot_training_loss(losses):
+    plt.style.use('default')
+    plt.figure(figsize=(6,4))
+    plt.xlabel('epoch')
+    plt.ylabel('loss')
+    epochs = range(1, len(losses)+1)
+    plt.plot(epochs, losses, color="blue", label="training loss")
+    # ensure y-axis starts from 0 even when training goes bad, while keeping auto-scaled value for peak
+    plt.ylim(bottom=0, top=plt.ylim()[1]+0.1)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
 def setup_bool_gradient(ax:plt.Axes, meshgrid, title=None):
     ax.set(xticks=[0, 1], yticks=[0, 1], xlim=(-0.5, 1.5), ylim=(-0.5, 1.5))
     ax.set_aspect('equal') # make sure it's square
