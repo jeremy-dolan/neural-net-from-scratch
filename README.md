@@ -7,8 +7,8 @@ Machine learning frameworks, with some demo applications and analysis.
   It is well commented and wildly inefficient. 🙃
 
 <!--
-* [neural_net_numpy.py](neural_net_numpy.py) - Complete feedforward neural network
-  framework, written with NumPy. It is mildly inefficient.
+* [mlp_framework_numpy.py](mlp_framework_numpy.py) - Complete feedforward
+  neural network framework, written with NumPy. It is mildly inefficient.
 -->
 
 * _MLP notebook:_
@@ -17,7 +17,12 @@ Machine learning frameworks, with some demo applications and analysis.
   construct a multi-layer perceptron that learns XOR, and then analyze the
   trained network and graph its decision boundaries.
 
+* _MLP notebook:_
+  [Interactive digit classifier](mlp_demo_interactive_digit_classifier.ipynb) -
+  This notebook trains a digit classifier using the MNIST dataset. Still in
+  development, the interactive ipynb widget for drawing digits with a live
+  visualization of the probability distribution for classification.
+
 <!--
-* [minst-net](3layer-minst-net.ipynb) - This notebook builds a digit classifier
-  using the MNIST dataset. WIP.
+* [qlearning_framework_vanilla.py](qlearning_framework_vanilla.py) - ...
 -->
