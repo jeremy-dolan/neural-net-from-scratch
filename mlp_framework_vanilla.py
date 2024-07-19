@@ -1,4 +1,4 @@
-# Feedforward neural network in vanilla python
+# MLP framework in vanilla python
 #
 # The Node, Layer, and Net classes constitute a complete multilayer perceptron
 # neural network framework with forward inference (`Net.forward`), backward
@@ -19,12 +19,17 @@ class Gradients(TypedDict):
 class Sample(TypedDict):
     x: list[float]
     y: list[float]
-TrainingData = list[Sample]
+LabeledDataset = list[Sample]
+class TrainingResults(TypedDict):
+    training_loss: list[float]
+    test_loss: list[float|None]
+    test_accuracy: list[float|None]
 
 class Node:
     def __init__(self, num_inputs:int, activation_fx:Callable, bias:float = 0.):
         '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
         self.weights = [random.uniform(0.2, 0.5)*random.choice((1, -1)) for _ in range(num_inputs)]
+        # FIXME improve weight initialization
         self.bias = bias
         self.activation_fx = activation_fx
 
@@ -126,24 +131,31 @@ class Net:
         return {'weight': weight_grads, 'bias': bias_grads}
 
     def train(self,
-              training_data:TrainingData,
+              training_data:LabeledDataset,
               epochs:int,
               batch_size:int=32,
               learning_rate:float=0.1,
-              batch_progress_every=20,      # report average loss every N batches for monitoring during training
-              epoch_progress_every=1        # report average loss over the entire epoch every N epochs
-              ) -> list[float]:             # average epoch losses
-        '''Train network with `training_data` using gradient descent, for `epochs` epochs`. By default, this will
+              batch_progress_every=100,     # report average loss every N batches for monitoring during training
+              epoch_progress_every=1,       # report average loss over the entire epoch every N epochs
+              test_every=0,                 # calculate test loss and test accuracy every N epochs
+              test_data:LabeledDataset=None
+              ) -> TrainingResults:
+        '''Train network with `training_data` using gradient descent, for `epochs`. By default, this will
         perform minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size`
-        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return a list of the
-        average loss of each epoch'''
+        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return TrainingResults
+        containing training loss from each epoch, and optionally test loss and test accuracy.'''
         expected_batches = math.ceil(len(training_data)/batch_size)
-        epoch_losses = []
+        training_losses = []
+        test_losses = []
+        test_accuracies = []
 
         for epoch in range(1, epochs+1):
-            print_this_epoch = (epoch == 1 or epoch == epochs or (epoch % epoch_progress_every == 0))
+            test_this_epoch = (test_every > 0 and test_data is not None and epoch % test_every == 0)
+            print_this_epoch = (epoch_progress_every > 0 and epoch % epoch_progress_every == 0)
 
-            epoch_loss = 0
+            cumulative_epoch_loss = 0
+
+            # FIXME refactor to shuffle indices instead of the data itself
             random.shuffle(training_data)
 
             # gather minibatches of training data and pass them to gradient_descent()
@@ -151,29 +163,42 @@ class Net:
                 minibatch = training_data[batch_index:(batch_index + batch_size)]
                 batch_loss = self.gradient_descent(minibatch, learning_rate)
 
-                epoch_loss += batch_loss
-                if batch_num % batch_progress_every == 0:
-                    print(f'{epoch=} {batch_num=}/{expected_batches}, average loss {batch_loss/len(minibatch):.5f}')
+                cumulative_epoch_loss += batch_loss
+                if batch_progress_every > 0 and batch_num % batch_progress_every == 0:
+                    print(f'{epoch=} {batch_num=}/{expected_batches}, ' \
+                          f'average loss for batch: {batch_loss/len(minibatch):.5f}')
 
-            epoch_average_loss = epoch_loss/len(training_data)
-            epoch_losses.append(epoch_average_loss)
+            training_loss = cumulative_epoch_loss/len(training_data)
+            training_losses.append(training_loss)
+
+            if test_this_epoch:
+                test_loss, test_accuracy = self.test(test_data)
+                test_losses.append(test_loss)
+                test_accuracies.append(test_accuracy)
+
             if print_this_epoch:
-                print(f'epoch {epoch:{len(str(epochs))}d} complete, ' \
-                      f'{batch_num} batch{"es" if batch_num != 1 else ""}, ' \
-                      f'average loss {epoch_average_loss:.5f}')
+                print(f'epoch {epoch:{len(str(epochs))}d} complete' \
+                      f', {batch_num} batch{"es" if batch_num != 1 else ""}' \
+                      f', {training_loss=:.5f}', end='')
+                print(f', {test_loss=:.5f}' if test_this_epoch else '')
 
-        return epoch_losses
+        return {
+            'training_loss': training_losses,
+            'test_loss': test_losses,
+            'test_accuracy': test_accuracies
+        }
 
-    def gradient_descent(self, batch:TrainingData, learning_rate:float) -> float:
+    def gradient_descent(self, batch:LabeledDataset, learning_rate:float) -> float:
             '''Perform gradient descent on the given `batch`: compute the gradients, average them, and update the
             network weights scaled by `learning_rate`. Return the total accumulated loss for the batch.'''
-            batch_size = len(batch) # NB: may be smaller than Net.train()'s batch_size (final minibatch of an epoch)
+            # batch < Net.train()'s batch_size if len(training_data) < batch_size or for final minibatch of an epoch
+            batch_size = len(batch)
 
             # (1) for each training sample, collect gradients of the loss by running a forward and backward pass
             batch_grads = []
             batch_loss = 0
             for sample in batch:
-                x, y = sample.values()
+                x, y = sample['x'], sample['y']
 
                 activations = self.forward(x)
                 gradients = self.backward(x, y, activations)
@@ -211,6 +236,25 @@ class Net:
                         node.weights[i] += -w_grad * learning_rate
 
             return batch_loss
+
+    # FIXME assumes single-label classification; refactor for multi-label, binary choice with threshold, regression...
+    def test(self, test_data:LabeledDataset) -> tuple[float, float]:
+        cumulative_loss = 0.
+        correct_predictions = 0
+        num_samples = len(test_data)
+
+        for sample in test_data:
+            x, y = sample['x'], sample['y']
+            ŷ = self.forward(x)[-1]
+
+            cumulative_loss += self.loss_fx(y, ŷ)
+
+            true_class = y.index(max(y))
+            predicted_class = ŷ.index(max(ŷ))
+            if true_class == predicted_class:
+                correct_predictions += 1
+
+        return cumulative_loss/num_samples, correct_predictions/num_samples
 
 
 #########################################################
