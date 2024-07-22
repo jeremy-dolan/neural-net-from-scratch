@@ -270,9 +270,13 @@ def leaky_ReLU(z, alpha=0.01):
     return z if z >= 0 else z*alpha
 
 def sigmoid(z:float) -> float:
-    '''sigmoid function for binary classification'''
-    exp_z = math.exp(z)          # benchmark: 10-14% faster to store exp(z) rather than calculate twice
-    return exp_z / (1 + exp_z)   # alternate form for numerical stability; 1/(1+math.exp(-z)) will overflow
+    '''numerically stable logistic function; map input to range (0, 1); useful for binary classification'''
+    if z >= 0:
+        exp_neg_z = math.exp(-z)
+        return 1 / (1 + exp_neg_z)
+    else: # z < 0                   # with (large) negatives, use alternate formula for numerical stability
+        exp_z = math.exp(z)         # benchmark: 10-14% faster to store exp(z) rather than calculate twice
+        return exp_z / (1 + exp_z)
 
 # Derivatives of our activation functions, for backpropagation:
 def sigmoid_derivative(z:float) -> float:
