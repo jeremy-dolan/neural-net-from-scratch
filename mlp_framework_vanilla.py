@@ -60,12 +60,6 @@ class Net:
         self.layers = [Layer(n, shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
         self.loss_fx = loss_fx
 
-    def show_params(self):
-        '''Print the network's parameters (weights and biases of each node)'''
-        for i,layer in enumerate(self.layers, 1):
-            for j,node in enumerate(layer.nodes, 1):
-                print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
-
     def forward(self, x:Vector) -> Activations:
         '''Given input `x`, compute activations for each node in the network by iterating through layers'''
         return [x := layer.activate(x) for layer in self.layers]
@@ -76,7 +70,7 @@ class Net:
         a weight or bias--holding the other parameters fixed--changes the loss, and are needed for training.)'''
         # ŷ, the prediction, is just the final layer's output
         ŷ = activations[-1]
-        # we start by calculating dL/dŷ, the derivative of the loss with regard to the prediction:
+        # we start by calculating dL/dŷ, the derivative of the loss with respect to the prediction:
         dLdŷ = loss_derivative[self.loss_fx](y, ŷ)
 
         # create weight and bias gradient lists so we can index on them
@@ -132,7 +126,7 @@ class Net:
 
     def train(self,
               training_data:LabeledDataset,
-              epochs:int,
+              epochs:int=1,
               batch_size:int=32,
               learning_rate:float=0.1,
               batch_progress_every=100,     # report average loss every N batches for monitoring during training
@@ -255,6 +249,12 @@ class Net:
                 correct_predictions += 1
 
         return cumulative_loss/num_samples, correct_predictions/num_samples
+
+    def show_params(self):
+        '''Print the network's parameters (weights and biases of each node)'''
+        for i,layer in enumerate(self.layers, 1):
+            for j,node in enumerate(layer.nodes, 1):
+                print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
 
 
 #########################################################
