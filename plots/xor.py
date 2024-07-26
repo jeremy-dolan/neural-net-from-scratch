@@ -106,8 +106,8 @@ def plot_functions(sigmoid, sigmoid_derivative, log_loss):
     fig.subplots_adjust(wspace=0.3)
 
     x1 = [-5 + 0.25*i for i in range(40)]
-    s = [sigmoid(n) for n in x1]
-    sd = [sigmoid_derivative(n) for n in x1]
+    s = [sigmoid([n]) for n in x1]
+    sd = [sigmoid_derivative([n]) for n in x1]
 
     ax1.set_title('sigmoid(z) and derivative', fontsize=10)
     ax1.plot(x1, s, label=r'$\sigma(z) = \frac{1}{1 + e^{-z}}$', color='blue')

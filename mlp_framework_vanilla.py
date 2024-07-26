@@ -26,30 +26,26 @@ class TrainingResults(TypedDict):
     test_accuracy: list[float|None]
 
 class Node:
-    def __init__(self, num_inputs:int, activation_fx:Callable, bias:float = 0.):
+    def __init__(self, num_inputs:int, bias:float = 0.):
         '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
         self.weights = [random.uniform(0.2, 0.5)*random.choice((1, -1)) for _ in range(num_inputs)]
-        # FIXME improve weight initialization
+        # FIXME parameterize and improve weight initialization
         self.bias = bias
-        self.activation_fx = activation_fx
 
-    def activate(self, inputs:Vector) -> float:
-        '''Weight each input, add the bias, then apply the node's activation function'''
-        z = sum(weight * input for weight, input in zip(self.weights, inputs))
-        z += self.bias
-        return self.activation_fx(z)
-
+    def compute(self, inputs:Vector) -> float:
+        '''Sum the node's bias and the weighted inputs'''
+        return self.bias + sum(weight * input for weight, input in zip(self.weights, inputs))
 
 class Layer:
-    def __init__(self, layer_num, num_inputs:int, num_nodes:int, activation_fx:Callable):
+    def __init__(self, num_inputs:int, num_nodes:int, activation_fx:Callable):
         '''Construct a layer of `num_nodes` Nodes, each with `num_inputs` weights'''
-        self.layer_num = layer_num
-        self.nodes = [Node(num_inputs, activation_fx) for _ in range(num_nodes)]
+        self.activation_fx = activation_fx
+        self.nodes = [Node(num_inputs) for _ in range(num_nodes)]
 
     def activate(self, input:Vector) -> Vector:
         '''Activate each node in the layer, returning a list of activation values'''
-        return [node.activate(input) for node in self.nodes]
-
+        pre_activation_values = [node.compute(input) for node in self.nodes]
+        return self.activation_fx(pre_activation_values)
 
 class Net:
     def __init__(self, inputs:int, shape:list[int], activation_fxs:list[Callable], loss_fx:Callable):
@@ -57,7 +53,7 @@ class Net:
         training, where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
         assert len(shape) == len(activation_fxs)
         shape.insert(0, inputs)
-        self.layers = [Layer(n, shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
+        self.layers = [Layer(shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
         self.loss_fx = loss_fx
 
     def forward(self, x:Vector) -> Activations:
@@ -82,14 +78,18 @@ class Net:
         node_grads[-1] = dLdŷ
 
         # iterate backwards through the layers
-        for layer in reversed(self.layers):
-            layer_num = layer.layer_num
+        for enum, layer in enumerate(reversed(self.layers)):
+            layer_num = len(self.layers)-1-enum
 
-            # for each node, its activation from the forward pass, and its gradient from the backward pass...
-            for n, a, dLda in zip(layer.nodes, activations[layer_num], node_grads[layer_num]):
-                # compute da/dz (partial derivative of the node's activation w.r.t. the pre-activation value)
-                dadz = derivative_from_a[n.activation_fx](a)
-                # compute dL/dz using the chain rule
+            # Compute da/dz (the partial derivative of a node's activation w.r.t. its pre-activation value) for
+            # all nodes in the layer. We do this first, for the whole layer, because some activation functions
+            # (notably, softmax) are dependent on every pre-activation value in that layer.
+            # Note also that we are calculating these derivatives directly from the activation value `a`.
+            layer_dadz = derivative_from_a[layer.activation_fx](activations[layer_num])
+
+            # for each node, the partial derivative of its activation, and its loss gradient...
+            for n, dadz, dLda in zip(layer.nodes, layer_dadz, node_grads[layer_num]):
+                # compute dL/dz (derivative of the loss w.r.t. the pre-activation value) using the chain rule
                 dLdz = dadz * dLda
 
                 # Now distribute dLdz backwards to each component of z: bias, weights, and prior layer activations
@@ -262,31 +262,27 @@ class Net:
 #########################################################
 
 # Activation functions
-def ReLU(z:float):
+def ReLU(V:Vector) -> Vector:
     '''rectified linear unit function, aka squash at zero'''
-    return max(0, z)
+    return [max(0, z) for z in V]
 
-def leaky_ReLU(z, alpha=0.01):
-    return z if z >= 0 else z*alpha
+def leaky_ReLU(V:Vector, alpha=0.01) -> Vector:
+    '''avoid dying ReLUs (but also sparse activation) with a small slope for negative inputs'''
+    return [z if z >= 0 else z*alpha for z in V] # slower: max(alpha*z, z)
 
-def sigmoid(z:float) -> float:
-    '''numerically stable logistic function; map input to range (0, 1); useful for binary classification'''
-    if z >= 0:
-        exp_neg_z = math.exp(-z)
-        return 1 / (1 + exp_neg_z)
-    else: # z < 0                   # with (large) negatives, use alternate formula for numerical stability
-        exp_z = math.exp(z)         # benchmark: 10-14% faster to store exp(z) rather than calculate twice
-        return exp_z / (1 + exp_z)
+def sigmoid(V:Vector) -> Vector:
+    '''numerically stable logistic function; map inputs to range (0, 1); useful for binary classification'''
+    return [1 / (1 + math.exp(-z)) if z >= 0 else (exp := math.exp(z)) / (1 + exp) for z in V]
+
 
 # Derivatives of our activation functions, for backpropagation:
-def sigmoid_derivative(z:float) -> float:
-    '''calculate the derivative of sigmoid given pre-activation value z'''
-    sig = sigmoid(z)
-    return sig * (1-sig)
+def sigmoid_derivative(V:Vector) -> Vector:
+    '''calculate the derivative of sigmoid given pre-activation values z'''
+    return [(sig := sigmoid([z])[0]) * (1-sig) for z in V]
 
-def sigmoid_derivative_from_a(a:float) -> float:
+def sigmoid_derivative_from_a(V:Vector) -> Vector:
     '''during backprop we already have sigmoid(z) = the node's activation a, so calculate the derivative directly'''
-    return a * (1-a)
+    return [a * (1-a) for a in V]
 
 def ReLU_derivative(v:float) -> float:
     '''the formula for the derivative of ReLU is identical whether calculated from z or from a'''
