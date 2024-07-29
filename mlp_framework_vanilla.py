@@ -1,8 +1,8 @@
 # MLP framework in vanilla python
 #
 # The Node, Layer, and Net classes constitute a complete multilayer perceptron
-# neural network framework with forward inference (`Net.forward`), backward
-# propagation (`Net.backward`), and gradient descent training (`Net.train`)
+# neural network framework with forward inference (`Net.forward`) and gradient
+# descent training (`Net.train`) by backpropagation of error (`Net.backward`).
 #
 # This framework is written without numpy/pytorch/tensorflow/scikit-learn for
 # educational purposes. It is wildly inefficient.
@@ -134,10 +134,11 @@ class Net:
               test_every=0,                 # calculate test loss and test accuracy every N epochs
               test_data:LabeledDataset=None
               ) -> TrainingResults:
-        '''Train network with `training_data` using gradient descent, for `epochs`. By default, this will
-        perform minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size`
-        to len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return TrainingResults
-        containing training loss from each epoch, and optionally test loss and test accuracy.'''
+        '''Train network with `training_data` using gradient descent, for `epochs`. By default, this will perform
+        minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size` to
+        len(training_data) and for stochastic gradient decent, set `batch_size` to 1. Return TrainingResults
+        containing training loss from each epoch, and optionally test loss and test accuracy. NB: This is essentially
+        a wrapper for .gradient_descent() that checks the data, batches it up, and optionally reports progress.'''
         expected_batches = math.ceil(len(training_data)/batch_size)
         training_losses = []
         test_losses = []
@@ -166,15 +167,15 @@ class Net:
             training_losses.append(training_loss)
 
             if test_this_epoch:
-                test_loss, test_accuracy = self.test(test_data)
+                test_loss, num_correct, num_samples = self.test(test_data)
                 test_losses.append(test_loss)
-                test_accuracies.append(test_accuracy)
+                test_accuracies.append([num_correct, num_samples])
 
             if print_this_epoch:
                 print(f'epoch {epoch:{len(str(epochs))}d} complete' \
                       f', {batch_num} batch{"es" if batch_num != 1 else ""}' \
                       f', {training_loss=:.5f}', end='')
-                print(f', {test_loss=:.5f}' if test_this_epoch else '')
+                print(f', {test_loss=:.5f}, accuracy: {num_correct}/{num_samples}' if test_this_epoch else '')
 
         return {
             'training_loss': training_losses,
@@ -231,8 +232,10 @@ class Net:
 
             return batch_loss
 
-    # FIXME assumes single-label classification; refactor for multi-label, binary choice with threshold, regression...
-    def test(self, test_data:LabeledDataset) -> tuple[float, float]:
+    # FIXME assumes single-label classification (either binary or multi-class)
+    # refactor for multi-label classification, regression (continuous outputs)...
+    def test(self, test_data:LabeledDataset, threshold=0.5) -> tuple[float, int, int]:
+        '''WIP'''
         cumulative_loss = 0.
         correct_predictions = 0
         num_samples = len(test_data)
@@ -243,8 +246,13 @@ class Net:
 
             cumulative_loss += self.loss_fx(y, ŷ)
 
-            true_class = y.index(max(y))
-            predicted_class = ŷ.index(max(ŷ))
+            if len(y) == 1:         # assume binary classification
+                true_class = y[0]
+                predicted_class = 0 if ŷ < threshold else 1
+            else:                   # assume one-hot vector vs. a probability distribution
+                true_class = y.index(1)
+                predicted_class = ŷ.index(max(ŷ))
+
             if true_class == predicted_class:
                 correct_predictions += 1
 
@@ -274,6 +282,12 @@ def sigmoid(V:Vector) -> Vector:
     '''numerically stable logistic function; map inputs to range (0, 1); useful for binary classification'''
     return [1 / (1 + math.exp(-z)) if z >= 0 else (exp := math.exp(z)) / (1 + exp) for z in V]
 
+def softmax(V:Vector) -> Vector:
+    '''normalize logits to a probability distribution; useful for multi-class classification'''
+    max_V = max(V)
+    numerators = [math.exp(z - max_V) for z in V] # exponentiate each logit; subtract max_V for numerical stability
+    denominator = sum(numerators)
+    return [numerator/denominator for numerator in numerators]
 
 # Derivatives of our activation functions, for backpropagation:
 def sigmoid_derivative(V:Vector) -> Vector:
@@ -284,39 +298,80 @@ def sigmoid_derivative_from_a(V:Vector) -> Vector:
     '''during backprop we already have sigmoid(z) = the node's activation a, so calculate the derivative directly'''
     return [a * (1-a) for a in V]
 
-def ReLU_derivative(v:float) -> float:
-    '''the formula for the derivative of ReLU is identical whether calculated from z or from a'''
-    return 1. if v > 0 else 0.
+def softmax_derivative_from_a(V:Vector) -> Vector:
+    # is there a way to avoid calculating the full Jacobian matrix and/or adapting my .backward()?'''
+    pass
 
-def leaky_ReLU_derivative(v:float, alpha=0.01) -> float:
-    return 1. if v > 0 else alpha
+def ReLU_derivative(V:Vector) -> Vector:
+    '''the formula for the derivative of ReLU is identical whether calculated from z or from a'''
+    return [1. if v > 0 else 0. for v in V]
+
+def leaky_ReLU_derivative(V:Vector, alpha=0.01) -> Vector:
+    return [1. if v > 0 else alpha for v in V]
 
 # Loss functions and their derivatives
-def log_loss(y_actual:Vector, y_predicted:Vector) -> float:
-    '''cross-entropy loss for binary classification; penalizes confident but incorrect predictions more heavily'''
+# Note that loss functions themselves are only used for monitoring and evaluation of the training process;
+# it's the derivative of the loss function that is directly used in training (by backpropagation).
+def mse(y_actual:Vector, y_predicted:Vector) -> float:
+    '''Quadratic loss for Vectors `y_actual` and `y_predicted`, useful for regression'''
+    error = [y - ŷ for y, ŷ in zip(y_actual, y_predicted)]
+    squared_error = [v**2 for v in error]
+    mean_squared_error = sum(squared_error) / len(y_actual)
+    return mean_squared_error
+    
+def mse_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
+    '''Quick hack, make implementation intuitive. dMSE/dy = 2/n * (ŷ-y)'''
+    scaling_factor = 2 / len(y_actual)
+    return [scaling_factor * (ŷ - y) for y, ŷ in zip(y_actual, y_predicted)]
+
+def binary_cross_entropy(y_actual:Vector, y_predicted:Vector) -> float:
+    '''Log loss for independent binary classifications (including multi-label classification);
+    log loss penalizes confident but incorrect predictions more heavily.'''
     loss = 0
     for y, ŷ in zip(y_actual, y_predicted):                         # accumulate the loss for each output node
-        ŷ = max(1e-15, min(1-1e-15, ŷ))                             # clip ŷ to [1e-15, 1-1e-15] to avoid log(0)
-        loss += -((y * math.log(ŷ)) + ((1 - y) * math.log(1 - ŷ)))  # NB: simplifies when y ∈ {0,1}
-    return loss / len(y_actual)                                     # return mean log loss
+        ŷ = min(max(ŷ, 1e-15), 1 - 1e-15)                           # clip ŷ to [1e-15, 1-1e-15] to avoid log(0)
+        loss += -((y * math.log(ŷ)) + ((1 - y) * math.log(1 - ŷ)))  # NB: simplifies piecewise when y ∈ {0,1}
+    return loss / len(y_actual)                                     # normalize for training stability
 
-def log_loss_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
-    '''Compute the derivative of the log loss for binary classification.'''
+def binary_cross_entropy_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
+    '''Given true output y_actual, return gradient of the loss with respect to each prediction ŷ ∈ y_predicted'''
     derivatives = []
-    for y, ŷ in zip(y_actual, y_predicted):
-        ŷ = max(1e-15, min(1-1e-15, ŷ))
-        derivative = -(y / ŷ) + ((1 - y) / (1 - ŷ))
+    for y, ŷ in zip(y_actual, y_predicted):          # each prediction is independent
+        ŷ = min(max(ŷ, 1e-15), 1 - 1e-15)            # clip ŷ to [1e-15, 1-1e-15] to avoid dividing by 0
+        derivative = -(y / ŷ) + ((1 - y) / (1 - ŷ))  # NB: simplifies piecewise when y ∈ {0,1}
         derivatives.append(derivative)
     return derivatives
 
-# mappings
+def categorical_cross_entropy(y_actual:Vector, y_predicted:Vector) -> float:
+    '''Multi-class classification version of log loss, for use with one-hot encoded vectors.'''
+    # We only calculate the negative logarithm of the predicted probability for the single true class. But because
+    # the probability given by softmax depends on every logit, all of the outputs still indirectly affect the loss
+    one_hot_index = y_actual.index(1)
+    one_hot_prediction = y_predicted[one_hot_index]
+    clipped_prediction = min(max(one_hot_prediction, 1e-15), 1 - 1e-15) # avoid log 0 (undef) / log 1 (zero gradient)
+    return -math.log(clipped_prediction)
+
+def categorical_cross_entropy_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
+    '''Calculate loss gradient for the output node corresponding with the true (one hot) class. Only that node directly
+    contributes to the loss with cross entropy, although the error will distribute backwards through the softmax derivative'''
+    derivatives = [0] * len(y_actual) # initialize vector
+    one_hot_index = y_actual.index(1)
+    one_hot_prediction = y_predicted[one_hot_index]
+    clipped_prediction = max(one_hot_prediction, 1e-15) # avoid division by 0
+    derivatives[one_hot_index] = -1 / clipped_prediction
+    return derivatives
+ 
+# function/derivative mappings
 derivative_from_a = {
     sigmoid: sigmoid_derivative_from_a,
     ReLU: ReLU_derivative,
     leaky_ReLU: leaky_ReLU_derivative,
+    softmax: softmax_derivative_from_a,
 }
 loss_derivative = {
-    log_loss: log_loss_derivative,
+    mse: mse_derivative,
+    binary_cross_entropy: binary_cross_entropy_derivative,
+    categorical_cross_entropy: categorical_cross_entropy_derivative,
 }
 
 # Hat tips for their explanations of backpropagation:
