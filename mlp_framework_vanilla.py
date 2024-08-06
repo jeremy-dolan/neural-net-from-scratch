@@ -33,7 +33,7 @@ class Node:
         self.bias = bias
 
     def compute(self, inputs:Vector) -> float:
-        '''Sum the node's bias and the weighted inputs'''
+        '''Sum the bias and each weighted input for the Node'''
         return self.bias + sum(weight * input for weight, input in zip(self.weights, inputs))
 
 class Layer:
@@ -51,10 +51,10 @@ class Net:
     def __init__(self, inputs:int, shape:list[int], activation_fxs:list[Callable], loss_fx:Callable):
         '''Construct a neural network with `inputs` input nodes and `loss_fx` as the loss function for
         training, where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
-        assert len(shape) == len(activation_fxs)
         shape.insert(0, inputs)
         self.layers = [Layer(shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
         self.loss_fx = loss_fx
+        self.sanity_checks()
 
     def forward(self, x:Vector) -> Activations:
         '''Given input `x`, compute activations for each node in the network by iterating through layers'''
@@ -256,13 +256,26 @@ class Net:
             if true_class == predicted_class:
                 correct_predictions += 1
 
-        return cumulative_loss/num_samples, correct_predictions/num_samples
+        return cumulative_loss/num_samples, correct_predictions, num_samples
 
     def show_params(self):
         '''Print the network's parameters (weights and biases of each node)'''
         for i,layer in enumerate(self.layers, 1):
             for j,node in enumerate(layer.nodes, 1):
                 print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
+
+    def sanity_checks(self):
+        for layer_i, layer in enumerate(self.layers,  1):
+            # ensure Net instantiation has an activation function for each layer
+            if not hasattr(layer, 'activation_fx'):
+                raise ValueError(f'Layer {layer_i} has no activation function assigned')
+            # ensure softmax() only used on final layer; derivative otherwise unimplemented
+            if layer.activation_fx == softmax and layer_i != len(self.layers):
+                raise ValueError(f'softmax activation is only supported for the final layer')
+        # softmax() and categorical_cross_entropy() have their gradient calculated together, so they must be used
+        # together or not at all. See docstring in `coupled_softmax_and_categorical_cross_entropy_gradient()`
+        if (self.layers[-1].activation_fx == softmax) != (self.loss_fx == categorical_cross_entropy):
+            raise ValueError('softmax and categorical_cross_entropy only supported when paired together')
 
 
 #########################################################
@@ -279,7 +292,7 @@ def leaky_ReLU(V:Vector, alpha=0.01) -> Vector:
     return [z if z >= 0 else z*alpha for z in V] # slower: max(alpha*z, z)
 
 def sigmoid(V:Vector) -> Vector:
-    '''numerically stable logistic function; map inputs to range (0, 1); useful for binary classification'''
+    '''numerically stable logistic function; map each input to range (0, 1); useful for binary classification'''
     return [1 / (1 + math.exp(-z)) if z >= 0 else (exp := math.exp(z)) / (1 + exp) for z in V]
 
 def softmax(V:Vector) -> Vector:
@@ -298,16 +311,17 @@ def sigmoid_derivative_from_a(V:Vector) -> Vector:
     '''during backprop we already have sigmoid(z) = the node's activation a, so calculate the derivative directly'''
     return [a * (1-a) for a in V]
 
-def softmax_derivative_from_a(V:Vector) -> Vector:
-    # is there a way to avoid calculating the full Jacobian matrix and/or adapting my .backward()?'''
-    pass
-
 def ReLU_derivative(V:Vector) -> Vector:
     '''the formula for the derivative of ReLU is identical whether calculated from z or from a'''
     return [1. if v > 0 else 0. for v in V]
 
 def leaky_ReLU_derivative(V:Vector, alpha=0.01) -> Vector:
     return [1. if v > 0 else alpha for v in V]
+
+def softmax_fake_derivative(V:Vector) -> Vector:
+    '''coupled_softmax_and_categorical_cross_entropy_gradient() computes the combined gradient of softmax and
+    cross-entropy, so here we just fabricate a vector of ones that yield multiplicative identity by the chain rule'''
+    return [1] * len(V)
 
 # Loss functions and their derivatives
 # Note that loss functions themselves are only used for monitoring and evaluation of the training process;
@@ -346,32 +360,44 @@ def categorical_cross_entropy(y_actual:Vector, y_predicted:Vector) -> float:
     '''Multi-class classification version of log loss, for use with one-hot encoded vectors.'''
     # We only calculate the negative logarithm of the predicted probability for the single true class. But because
     # the probability given by softmax depends on every logit, all of the outputs still indirectly affect the loss
-    one_hot_index = y_actual.index(1)
-    one_hot_prediction = y_predicted[one_hot_index]
-    clipped_prediction = min(max(one_hot_prediction, 1e-15), 1 - 1e-15) # avoid log 0 (undef) / log 1 (zero gradient)
-    return -math.log(clipped_prediction)
+    one_hot_y_index = y_actual.index(1)
+    corresponding_ŷ = y_predicted[one_hot_y_index]
+    clipped_ŷ = min(max(corresponding_ŷ, 1e-15), 1 - 1e-15) # avoid log 0 (undef) / log 1 (zero gradient)
+    return -math.log(clipped_ŷ)
 
 def categorical_cross_entropy_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
-    '''Calculate loss gradient for the output node corresponding with the true (one hot) class. Only that node directly
-    contributes to the loss with cross entropy, although the error will distribute backwards through the softmax derivative'''
+    '''Calculate loss gradient for the output node corresponding with the true (one hot) class. Only that node
+    directly contributes to the loss with cross entropy (the error will then spread backwards through softmax)'''
     derivatives = [0] * len(y_actual) # initialize vector
     one_hot_index = y_actual.index(1)
     one_hot_prediction = y_predicted[one_hot_index]
     clipped_prediction = max(one_hot_prediction, 1e-15) # avoid division by 0
     derivatives[one_hot_index] = -1 / clipped_prediction
     return derivatives
- 
+
+def coupled_softmax_and_categorical_cross_entropy_gradient(y_actual:Vector, y_predicted:Vector) -> Vector:
+    '''Calculate the combined gradient of softmax and cross entropy in the output layer. Calculating them together
+    here and then faking it for softmax (`softmax_fake_derivative()`) is a hack to maintain the simple, linear flow
+    of Net.backward(). Taken independently, softmax's derivative is a Jacobian. To calculate its contribution to the
+    gradient of the categorical cross-entropy loss, we need to know the one-hot category used for the loss,
+    which isn't accessible to the activation derivative functions in this framework, as it stands.
+
+    Without introducing a significant new layer of abstraction to what is supposed to be a straightforward framework,
+    there does not seem to be an elegant solution. This hack, at least, has the virtue of computational efficiency:
+    softmax and cross entropy are tightly coupled, and their combined gradient simplifies to:'''
+    return [ŷ - y for y, ŷ in zip(y_actual, y_predicted)]
+
 # function/derivative mappings
 derivative_from_a = {
     sigmoid: sigmoid_derivative_from_a,
     ReLU: ReLU_derivative,
     leaky_ReLU: leaky_ReLU_derivative,
-    softmax: softmax_derivative_from_a,
+    softmax: softmax_fake_derivative,
 }
 loss_derivative = {
     mse: mse_derivative,
     binary_cross_entropy: binary_cross_entropy_derivative,
-    categorical_cross_entropy: categorical_cross_entropy_derivative,
+    categorical_cross_entropy: coupled_softmax_and_categorical_cross_entropy_gradient,
 }
 
 # Hat tips for their explanations of backpropagation:
