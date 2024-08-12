@@ -29,7 +29,7 @@ class Node:
     def __init__(self, num_inputs:int, bias:float = 0.):
         '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
         self.weights = [random.uniform(0.2, 0.5)*random.choice((1, -1)) for _ in range(num_inputs)]
-        # FIXME parameterize and improve weight initialization
+        # TODO parameterize and improve weight initialization
         self.bias = bias
 
     def compute(self, inputs:Vector) -> float:
@@ -51,6 +51,7 @@ class Net:
     def __init__(self, inputs:int, shape:list[int], activation_fxs:list[Callable], loss_fx:Callable):
         '''Construct a neural network with `inputs` input nodes and `loss_fx` as the loss function for
         training, where layer `n` has `shape[n]` nodes and `activation_fxs[n]` activation function.'''
+        # attach input layer to the computational layers:
         shape.insert(0, inputs)
         self.layers = [Layer(shape[n], shape[n+1], activation_fxs[n]) for n in range(len(shape)-1)]
         self.loss_fx = loss_fx
@@ -129,9 +130,9 @@ class Net:
               epochs:int=1,
               batch_size:int=32,
               learning_rate:float=0.1,
-              batch_progress_every=100,     # report average loss every N batches for monitoring during training
-              epoch_progress_every=1,       # report average loss over the entire epoch every N epochs
-              test_every=0,                 # calculate test loss and test accuracy every N epochs
+              batch_progress_every_n=100,    # report average loss every N batches for monitoring during training
+              epoch_progress_every_n=1,      # report average loss over the entire epoch every N epochs
+              test_every_n=0,                # calculate test loss and test accuracy every N epochs
               test_data:LabeledDataset=None
               ) -> TrainingResults:
         '''Train network with `training_data` using gradient descent, for `epochs`. By default, this will perform
@@ -145,8 +146,8 @@ class Net:
         test_accuracies = []
 
         for epoch in range(1, epochs+1):
-            test_this_epoch = (test_every > 0 and test_data is not None and epoch % test_every == 0)
-            print_this_epoch = (epoch_progress_every > 0 and epoch % epoch_progress_every == 0)
+            test_this_epoch = (test_every_n > 0 and test_data is not None and epoch % test_every_n == 0)
+            print_this_epoch = (epoch_progress_every_n > 0 and epoch % epoch_progress_every_n == 0)
 
             cumulative_epoch_loss = 0
 
@@ -159,7 +160,7 @@ class Net:
                 batch_loss = self.gradient_descent(minibatch, learning_rate)
 
                 cumulative_epoch_loss += batch_loss
-                if batch_progress_every > 0 and batch_num % batch_progress_every == 0:
+                if batch_progress_every_n > 0 and batch_num % batch_progress_every_n == 0:
                     print(f'{epoch=} {batch_num=}/{expected_batches}, ' \
                           f'average loss for batch: {batch_loss/len(minibatch):.5f}')
 
@@ -265,6 +266,7 @@ class Net:
                 print(f'layer {i}, node {j}, {node.weights=} {node.bias=}')
 
     def sanity_checks(self):
+        '''Catch some Net initiation hazards'''
         for layer_i, layer in enumerate(self.layers,  1):
             # ensure Net instantiation has an activation function for each layer
             if not hasattr(layer, 'activation_fx'):
@@ -319,8 +321,12 @@ def leaky_ReLU_derivative(V:Vector, alpha=0.01) -> Vector:
     return [1. if v > 0 else alpha for v in V]
 
 def softmax_fake_derivative(V:Vector) -> Vector:
-    '''coupled_softmax_and_categorical_cross_entropy_gradient() computes the combined gradient of softmax and
-    cross-entropy, so here we just fabricate a vector of ones that yield multiplicative identity by the chain rule'''
+    '''Return an all-ones vector with the same length as the input vector.
+
+    Softmax is only supported with categorical cross entropy, and `categorical_cross_entropy`'s derivative function
+    computes the combined gradient of softmax and cross-entropy. Here we just fabricate a vector that will pass
+    through the gradient unchanged when used with the chain rule. For further explanation/apology of this tragic
+    hack, see the docstring of `coupled_softmax_and_categorical_cross_entropy_gradient()`.'''
     return [1] * len(V)
 
 # Loss functions and their derivatives
@@ -382,7 +388,7 @@ def coupled_softmax_and_categorical_cross_entropy_gradient(y_actual:Vector, y_pr
     gradient of the categorical cross-entropy loss, we need to know the one-hot category used for the loss,
     which isn't accessible to the activation derivative functions in this framework, as it stands.
 
-    Without introducing a significant new layer of abstraction to what is supposed to be a straightforward framework,
+    Without introducing a significant new layer of abstraction to what is supposed to be a minimalist framework,
     there does not seem to be an elegant solution. This hack, at least, has the virtue of computational efficiency:
     softmax and cross entropy are tightly coupled, and their combined gradient simplifies to:'''
     return [ŷ - y for y, ŷ in zip(y_actual, y_predicted)]
