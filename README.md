@@ -9,12 +9,16 @@ Machine learning frameworks, with some demo applications and analysis.
       [XOR and linear separability](mlp_demo_xor_and_linear_separability.ipynb) -
       This notebook discusses the XOR function and linear separability. We
       construct a multi-layer perceptron that learns XOR, and then analyze the
-      trained network and graph its decision boundaries.
+      trained network and graph its decision boundaries.  
+      [![Teaser image](assets/teaser_xor_and_linear_separability.png)](mlp_demo_xor_and_linear_separability.ipynb)
+
     * _Demo:_ [Digit classifier](mlp_demo_digit_classifier.ipynb) - This
       notebook trains a multi-class digit classifier using the MNIST dataset,
       and features a couple of interesting visualizations. Planned addition: an
       interactive ipynb widget for drawing digits with real-time visualization
-      of the predicted probability distribution.
+      of the predicted probability distribution.  
+      [![Teaser image](assets/teaser_digit_classifier.png)](mlp_demo_digit_classifier.ipynb)
+
 
 <!--
 * [mlp_framework_numpy.py](mlp_framework_numpy.py) - Complete feedforward
