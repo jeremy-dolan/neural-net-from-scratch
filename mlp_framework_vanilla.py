@@ -11,23 +11,28 @@ import math
 import random
 from typing import Callable, TypedDict
 
-Vector = list[float]
+Vector = list[float|int]
 Activations = list[Vector]
 class Gradients(TypedDict):
     weight: list[list[Vector]]
     bias: list[Vector]
 class Sample(TypedDict):
-    x: list[float]
-    y: list[float]
+    x: list[float|int]
+    y: list[float|int]
 LabeledDataset = list[Sample]
 class TrainingResults(TypedDict):
     training_loss: list[float]
     test_loss: list[float|None]
     test_accuracy: list[float|None]
+class TestResult(TypedDict):
+    average_loss: float
+    num_correct: int
+    num_samples: int
+    incorrect_indices: list[int]
 
 class Node:
     def __init__(self, num_inputs:int, bias:float = 0.):
-        '''Initialize a new Node, with random small-but-non-negligible weights for each input'''
+        '''Initialize a node, with random small-but-non-negligible weights for each input'''
         self.weights = [random.uniform(0.2, 0.5)*random.choice((1, -1)) for _ in range(num_inputs)]
         # TODO parameterize and improve weight initialization
         self.bias = bias
@@ -168,15 +173,19 @@ class Net:
             training_losses.append(training_loss)
 
             if test_this_epoch:
-                test_loss, num_correct, num_samples = self.test(test_data)
-                test_losses.append(test_loss)
-                test_accuracies.append([num_correct, num_samples])
+                test_result = self.test(test_data)
+                test_losses.append(test_result['average_loss'])
+                test_correct, test_samples = test_result['num_correct'], test_result['num_samples']
+                test_accuracies.append([test_correct, test_samples])
 
             if print_this_epoch:
                 print(f'epoch {epoch:{len(str(epochs))}d} complete' \
                       f', {batch_num} batch{"es" if batch_num != 1 else ""}' \
                       f', {training_loss=:.5f}', end='')
-                print(f', {test_loss=:.5f}, accuracy: {num_correct}/{num_samples}' if test_this_epoch else '')
+                if test_this_epoch:
+                    print(f', {test_result["average_loss"]=:.5f}' \
+                          f', accuracy: {test_correct}/{test_samples}', end='')
+                print()
 
         return {
             'training_loss': training_losses,
@@ -235,13 +244,14 @@ class Net:
 
     # FIXME assumes single-label classification (either binary or multi-class)
     # refactor for multi-label classification, regression (continuous outputs)...
-    def test(self, test_data:LabeledDataset, threshold=0.5) -> tuple[float, int, int]:
-        '''WIP'''
-        cumulative_loss = 0.
-        correct_predictions = 0
+    def test(self, test_data:LabeledDataset, threshold=0.5) -> TestResult:
+        '''Test network with `test_data` dataset; return a dictionary containing `average_loss`, `num_correct`,
+        `num_samples`, and `incorrect_indices`.'''
         num_samples = len(test_data)
+        cumulative_loss = 0.
+        incorrect_predictions = []
 
-        for sample in test_data:
+        for i, sample in enumerate(test_data):
             x, y = sample['x'], sample['y']
             ŷ = self.forward(x)[-1]
 
@@ -249,15 +259,20 @@ class Net:
 
             if len(y) == 1:         # assume binary classification
                 true_class = y[0]
-                predicted_class = 0 if ŷ < threshold else 1
-            else:                   # assume one-hot vector vs. a probability distribution
+                predicted_class = (0 if ŷ[0] < threshold else 1)
+            else:                   # assume one-hot y and probability distribution ŷ
                 true_class = y.index(1)
                 predicted_class = ŷ.index(max(ŷ))
 
-            if true_class == predicted_class:
-                correct_predictions += 1
+            if true_class != predicted_class:
+                incorrect_predictions.append(i)
 
-        return cumulative_loss/num_samples, correct_predictions, num_samples
+        return {
+            'average_loss': cumulative_loss/num_samples,
+            'num_correct': num_samples - len(incorrect_predictions),
+            'num_samples': num_samples,
+            'incorrect_indices': incorrect_predictions
+        }
 
     def show_params(self):
         '''Print the network's parameters (weights and biases of each node)'''
