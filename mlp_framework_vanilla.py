@@ -9,17 +9,17 @@
 
 import math
 import random
-from typing import Callable, TypedDict
+from typing import Callable, TypedDict, Optional
 
-Vector = list[float|int]
-Activations = list[Vector]
+Vector = list[float]
+Activations = list[list[float]]                 # list[Vector]
 class Gradients(TypedDict):
-    weight: list[list[Vector]]
-    bias: list[Vector]
+    weight: list[list[list[float]]]             # list[list[Vector]]
+    bias: list[list[float]]                     # list[Vector]
 class Sample(TypedDict):
-    x: list[float|int]
-    y: list[float|int]
-LabeledDataset = list[Sample]
+    x: list[float]                              # Vector
+    y: list[float]                              # Vector
+LabeledDataset = list[dict[str, list[float]]]   # list[Sample]
 class TrainingResults(TypedDict):
     training_loss: list[float]
     test_loss: list[float|None]
@@ -69,7 +69,7 @@ class Net:
     def backward(self, x:Vector, y:Vector, activations:Activations) -> Gradients:
         '''Compute partial derivatives ("gradients") of the loss w.r.t. every weight and bias in the Net, given
         input `x`, correct output `y`, and `activations` from a forward pass. (The gradients indicate how changing
-        a weight or bias--holding the other parameters fixed--changes the loss, and are needed for training.)'''
+        a weight or bias--holding the other parameters fixed--changes the loss, and are used for training.)'''
         # ŷ, the prediction, is just the final layer's output
         ŷ = activations[-1]
         # we start by calculating dL/dŷ, the derivative of the loss with respect to the prediction:
@@ -79,7 +79,7 @@ class Net:
         weight_grads = [[] for _ in range(len(self.layers))]
         bias_grads = [[] for _ in range(len(self.layers))]
         # initialize node gradient values to zero so we can accumulate on them
-        node_grads = [[0] * len(self.layers[i].nodes) for i in range(len(self.layers))]
+        node_grads = [[0.] * len(self.layers[i].nodes) for i in range(len(self.layers))]
         # base case: derivative of the loss relative to our prediction
         node_grads[-1] = dLdŷ
 
@@ -138,7 +138,7 @@ class Net:
               batch_progress_every_n=100,    # report average loss every N batches for monitoring during training
               epoch_progress_every_n=1,      # report average loss over the entire epoch every N epochs
               test_every_n=0,                # calculate test loss and test accuracy every N epochs
-              test_data:LabeledDataset=None
+              test_data:Optional[LabeledDataset]=None
               ) -> TrainingResults:
         '''Train network with `training_data` using gradient descent, for `epochs`. By default, this will perform
         minibatch gradient descent with a `batch_size` of 32. For batch gradient descent, set `batch_size` to
@@ -151,7 +151,7 @@ class Net:
         test_accuracies = []
 
         for epoch in range(1, epochs+1):
-            test_this_epoch = (test_every_n > 0 and test_data is not None and epoch % test_every_n == 0)
+            test_this_epoch = (test_every_n > 0 and epoch % test_every_n == 0)
             print_this_epoch = (epoch_progress_every_n > 0 and epoch % epoch_progress_every_n == 0)
 
             cumulative_epoch_loss = 0
@@ -172,7 +172,7 @@ class Net:
             training_loss = cumulative_epoch_loss/len(training_data)
             training_losses.append(training_loss)
 
-            if test_this_epoch:
+            if test_this_epoch and test_data is not None:
                 test_result = self.test(test_data)
                 test_losses.append(test_result['average_loss'])
                 test_correct, test_samples = test_result['num_correct'], test_result['num_samples']
@@ -325,7 +325,7 @@ def sigmoid_derivative(V:Vector) -> Vector:
     return [(sig := sigmoid([z])[0]) * (1-sig) for z in V]
 
 def sigmoid_derivative_from_a(V:Vector) -> Vector:
-    '''during backprop we already have sigmoid(z) = the node's activation a, so calculate the derivative directly'''
+    '''during backpropagation we already have `a = sigmoid(z)`, so calculate the derivative directly'''
     return [a * (1-a) for a in V]
 
 def ReLU_derivative(V:Vector) -> Vector:
@@ -388,8 +388,9 @@ def categorical_cross_entropy(y_actual:Vector, y_predicted:Vector) -> float:
 
 def categorical_cross_entropy_derivative(y_actual:Vector, y_predicted:Vector) -> Vector:
     '''Calculate loss gradient for the output node corresponding with the true (one hot) class. Only that node
-    directly contributes to the loss with cross entropy (the error will then spread backwards through softmax)'''
-    derivatives = [0] * len(y_actual) # initialize vector
+    directly contributes to the loss with cross entropy (the error will then spread backwards through softmax).
+    This function isn't used by the framework; see coupled_softmax_and_categorical_cross_entropy_gradient().'''
+    derivatives = [0.] * len(y_actual) # initialize vector
     one_hot_index = y_actual.index(1)
     one_hot_prediction = y_predicted[one_hot_index]
     clipped_prediction = max(one_hot_prediction, 1e-15) # avoid division by 0
